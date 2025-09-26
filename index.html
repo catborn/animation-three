@@ -1,0 +1,231 @@
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>three.js + field of flowers</title>
+    <style>
+      body { margin: 0; overflow: hidden; user-select: none;}
+      canvas { display: block; }
+      #play-pause-btn {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        padding: 10px 20px;
+        background-color: #fff;
+        border: 1px solid #ccc;
+        cursor: pointer;
+      }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/dat.gui/build/dat.gui.min.js"></script>
+  </head>
+  <body>
+    <script type="module">
+      import * as THREE from 'https://cdn.skypack.dev/three@0.136.0/build/three.module.js';
+      import { OrbitControls } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/controls/OrbitControls.js';
+      import { OBJLoader } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/loaders/OBJLoader.js';
+      import { EffectComposer } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/postprocessing/EffectComposer.js';
+      import { RenderPass } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/postprocessing/RenderPass.js';
+      import { UnrealBloomPass } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/postprocessing/UnrealBloomPass.js';
+      import { GlitchPass } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/postprocessing/GlitchPass.js';
+      import { ShaderPass } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/postprocessing/ShaderPass.js';
+      import { gsap } from 'https://cdn.skypack.dev/gsap@3.9.1';
+      import anime from 'https://cdn.skypack.dev/animejs@3.2.1';
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      const renderer = new THREE.WebGLRenderer();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
+
+      const controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.5;
+      controls.enableZoom = true;
+      controls.minDistance = 10;
+      controls.maxDistance = 50; 
+
+      const petalGeometry = new THREE.SphereGeometry(0.2, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2);
+      const petalMaterial = new THREE.MeshBasicMaterial({ color: 'red' });
+      const flowers = [];
+      for (let i = 0; i < 1000; i++) {
+        const flower = new THREE.Group();
+        for (let j = 0; j < 5; j++) {
+          const petal = new THREE.Mesh(petalGeometry, petalMaterial);
+          petal.position.set(
+            Math.cos(j * Math.PI / 2.5) * 0.5,
+            Math.sin(j * Math.PI / 2.5) * 0.5,
+            0
+          );
+          petal.rotation.z = j * Math.PI / 2.5;
+          flower.add(petal);
+        }
+
+        const stemGeometry = new THREE.BufferGeometry();
+        const stemMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+        const stemPoints = [];
+        const stemLength = 20 + Math.random() * 3;
+        const stemBaseY = -10;
+        for (let k = 0; k < 10; k++) {
+          const x = Math.random() * 2 - 1;
+          //  const y = stemBaseY + k * stemLength / 9;
+          const y = 0;
+          const z = Math.random() * 2 - 1;
+          stemPoints.push(new THREE.Vector3(x, y, z));
+        }
+        const stemCurve = new THREE.CatmullRomCurve3(stemPoints);
+        stemGeometry.setFromPoints(stemCurve.getPoints(50));
+        const stem = new THREE.Mesh(stemGeometry, stemMaterial);
+        stem.rotation.y = -Math.PI / 2;
+        stem.rotation.x = -Math.PI / 2;
+
+        flower.add(stem);
+
+        flower.position.set(
+          Math.random() * 100 - 50,
+          0,
+          //Math.random() * 20,
+          Math.random() * 100 - 50
+        );
+        flower.rotation.x = -Math.PI / 2;
+        flower.scale.set(1 + Math.random() * 2, 1 + Math.random() * 2, 1);
+        flowers.push(flower);
+        scene.add(flower);
+      }
+
+
+      
+
+      // Contrôle des paramètres avec DAT.GUI
+      const guiParams = {
+        windSpeed: 1,
+        cameraAmplitude: 1,
+      };
+
+      const gui = new dat.GUI();
+      gui.add(guiParams, 'windSpeed', 0, 5);
+      gui.add(guiParams, 'cameraAmplitude', 0, 5);
+      gui.closed = true;
+
+      // Animation avec Anime.js
+      let isPlaying = false;
+      let cameraPosition = new THREE.Vector3(0, 50, 50); 
+      let cameraTarget = new THREE.Vector3(0, 0, 0);
+
+      // Initialisation de l'audio visualizer
+      const audioContext = new AudioContext();
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 1024;
+      const frequencyData = new Uint8Array(analyser.frequencyBinCount);
+
+      // Chargement et lecture de la musique
+      const audio = new Audio('https://raw.githubusercontent.com/vainsan/assets/refs/heads/main/track-classic-001.mp3');
+      audio.loop = true;
+      audio.play();
+      const audioSource = audioContext.createMediaElementSource(audio);
+      audioSource.connect(analyser);
+      analyser.connect(audioContext.destination);
+
+      // Mise à jour des propriétés de la caméra en fonction des fréquences
+
+      function updateCameraProperties() {
+        analyser.getByteFrequencyData(frequencyData);
+        const lowFreq = frequencyData.slice(0, 100).reduce((sum, value) => sum + value, 0) / 100;
+        const midFreq = frequencyData.slice(100, 500).reduce((sum, value) => sum + value, 0) / 400;
+        const highFreq = frequencyData.slice(500).reduce((sum, value) => sum + value, 0) / 512;
+
+        if (isPlaying) {
+          cameraPosition.x += (Math.random() * 2 - 1) * guiParams.cameraAmplitude * midFreq / 255;
+          cameraPosition.z += (Math.random() * 2 - 1) * guiParams.cameraAmplitude * midFreq / 255;
+          cameraPosition.y += (Math.random() * 2 - 1) * guiParams.cameraAmplitude * highFreq / 255;
+          camera.position.copy(cameraPosition);
+          camera.lookAt(cameraTarget);
+        }
+      }
+
+      // Animation avec Anime.js (mise à jour)
+      function animate() {
+        requestAnimationFrame(animate);
+
+        // Mouvement des fleurs
+
+        flowers.forEach(flower => {
+          flower.children.forEach((petal, index) => {
+            petal.rotation.z += Math.sin(Date.now() * 0.001 * guiParams.windSpeed + index * 0.5) * 0.01;
+          });
+          flower.position.x += Math.sin(Date.now() * 0.001 * guiParams.windSpeed) * 0.05;
+          flower.position.z += Math.cos(Date.now() * 0.001 * guiParams.windSpeed) * 0.1;
+          flower.rotation.z += Math.sin(Date.now() * 0.001 * guiParams.windSpeed) * 0.05;
+        });
+
+        updateCameraProperties();
+
+        renderer.render(scene, camera);
+      }
+
+      animate();
+      window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        composer.setSize(window.innerWidth, window.innerHeight);
+
+      });
+
+      // Contrôle de la lecture/pause avec la barre d'espace
+      document.addEventListener('keydown', (event) => {
+        if (event.code === 'Space') {
+          isPlaying = !isPlaying;
+          if (isPlaying) {
+            audio.play();
+          } else {
+            audio.pause();
+            anime({
+              targets: camera.position,
+              x: 0,
+              y: 50,
+              z: 100,
+              duration: 2000,
+              easing: 'linear'
+            });
+            anime({
+              targets: cameraTarget,
+              x: 0,
+              y: 0,
+              z: 0,
+              duration: 2000,
+              easing: 'linear'
+            });
+          }
+        }
+      });
+
+      // Effets visuels avancés
+      const composer = new EffectComposer(renderer);
+      const renderPass = new RenderPass(scene, camera);
+      composer.addPass(renderPass);
+
+      const bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(window.innerWidth, window.innerHeight),
+        1.5,
+        0.4,
+        0.85
+      );
+      bloomPass.strength = 0.5;
+      bloomPass.threshold = 0.1;
+      bloomPass.radius = 0.8;
+      composer.addPass(bloomPass);
+
+      const glitchPass = new GlitchPass();
+      //composer.addPass(glitchPass);
+
+      function render() {
+        requestAnimationFrame(render);
+        composer.render();
+      }
+
+      render();
+
+    </script>
+    <script src="https://codepen.io/vainsan/pen/eYwmgap.js"></script>
+  </body>
+</html>
