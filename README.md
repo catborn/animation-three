@@ -1,3 +1,3 @@
 it's moving...
 
-<img width="300" height="300" alt="image" src="https://github.com/user-attachments/assets/af8ad35c-86e0-4457-96f1-627b7008e707" />
+![](demo.gif)
